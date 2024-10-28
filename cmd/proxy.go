@@ -60,6 +60,11 @@ func runProxy(cmd *cobra.Command, args []string) {
 		enableBPF = false
 	}
 
+	debug, err := cmd.Flags().GetBool("debug")
+	if err != nil {
+		debug = false
+	}
+
 	if enableBPF {
 		objs, err := bpf.LoadObjects()
 		if err != nil {
@@ -152,14 +157,18 @@ func runProxy(cmd *cobra.Command, args []string) {
 							rconn.Close()
 							return
 						}
-						log.Printf("Received %d bytes from client\n%s\n", n, hex.Dump(buf[:n]))
+						if debug {
+							log.Printf("Received %d bytes from client\n%s\n\n", n, hex.Dump(buf[:n]))
+						}
 
 						m, err := rconn.Write(buf[:n])
 						if err != nil {
 							log.Println("Failed to write to server:", err)
 							return
 						}
-						log.Printf("Sent %d bytes to server\n%s\n", m, hex.Dump(buf[:m]))
+						if debug {
+							log.Printf("Sent %d bytes to server\n%s\n", m, hex.Dump(buf[:m]))
+						}
 					}
 				}(newAbort())
 
@@ -181,14 +190,18 @@ func runProxy(cmd *cobra.Command, args []string) {
 							conn.Close()
 							return
 						}
-						log.Printf("Received %d bytes from server\n%s\n\n", n, hex.Dump(buf[:n]))
+						if debug {
+							log.Printf("Received %d bytes from server\n%s\n\n", n, hex.Dump(buf[:n]))
+						}
 
 						m, err := conn.Write(buf[:n])
 						if err != nil {
 							log.Println("Failed to write to client:", err)
 							return
 						}
-						log.Printf("Sent %d bytes to client\n%s\n", m, hex.Dump(buf[:m]))
+						if debug {
+							log.Printf("Sent %d bytes to client\n%s\n", m, hex.Dump(buf[:m]))
+						}
 					}
 				}(newAbort())
 

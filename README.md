@@ -18,10 +18,25 @@ Now you can bring up tcpproxy-go in the shell that you added to the cgroup above
   bin/tcpproxy-go proxy -b 127.0.0.1 -l 8000 -e 127.0.0.1:5000
 ```
 
+## Curl
+
 To test, you can use curl:
 ```
   curl -vvv -H "Connection: close" http://localhost:8000/
 ```
+
+## IPerf3
+
+Server:
+```
+  iperf3 -s -B localhost -p 5000
+```
+
+Client:
+```
+  iperf3 -c localhost -p 8000
+```
+
 ## EBPF
 
 The bpf/bpf.c file hardcodes ports 8000 for the proxy listener port and 5000 for the server listener port. Modify if you need different ports.
