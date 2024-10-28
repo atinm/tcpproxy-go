@@ -53,7 +53,7 @@ int sockops_prog(struct bpf_sock_ops *skops) {
 
 SEC("sk_skb/stream_verdict/prog")
 int sk_skb_stream_verdict_prog(struct __sk_buff *skb) {
-#ifdef INJECT_MSG
+#if 0
 	// inject a 5 bytes message "PASS\n" for each packet at the beginning
 	bpf_skb_adjust_room(skb, 5, 0, 0);
 	__u8 *data = (void *)(long)skb->data;

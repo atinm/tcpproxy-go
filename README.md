@@ -41,7 +41,3 @@ Now you can bring up tcpproxy-go in the shell that you added to the cgroup above
 ```
 
 To disable BPF, remove the `--ebpf` or `-e` flag from the above tcpproxy-go command.
-
-## Inject message to the packet
-
-To inject a `PASS\n` message to the packet for each time the proxy receives a packet, remove the comment `// #define INJECT_MSG` in the `bpf/bpf.c` file.
