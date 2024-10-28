@@ -2,9 +2,11 @@ package bpf
 
 import (
 	"bufio"
+	"encoding/binary"
 	"errors"
 	"fmt"
 	"log"
+	"net"
 	"os"
 	"strings"
 
@@ -33,10 +35,10 @@ func LoadObjects() (*bpfObjects, error) {
 	return &objs, nil
 }
 
-func AttachProgram(objs *bpfObjects, program Program) (DetachFunc, error) {
+func AttachProgram(objs *bpfObjects, program Program, cgroup string) (DetachFunc, error) {
 	switch program {
 	case ProgramSockops:
-		return attachSockopsProgram(objs.SockopsProg)
+		return attachSockopsProgram(objs.SockopsProg, cgroup)
 	case ProgramSkSkb:
 		return attachSkSkbProgram(objs)
 	}
@@ -44,10 +46,16 @@ func AttachProgram(objs *bpfObjects, program Program) (DetachFunc, error) {
 	return nil, fmt.Errorf("unknown program: %d", program)
 }
 
-func attachSockopsProgram(p *ebpf.Program) (DetachFunc, error) {
-	cgroupPath, err := findCgroupPath()
-	if err != nil {
-		return nil, fmt.Errorf("find cgroup path: %w", err)
+func attachSockopsProgram(p *ebpf.Program, cgroup string) (DetachFunc, error) {
+	var cgroupPath string
+	var err error
+	if cgroup != "" {
+		cgroupPath = cgroup
+	} else {
+		cgroupPath, err = findCgroupPath()
+		if err != nil {
+			return nil, fmt.Errorf("find cgroup path: %w", err)
+		}
 	}
 
 	l, err := link.AttachCgroup(link.CgroupOptions{
@@ -69,7 +77,7 @@ func attachSockopsProgram(p *ebpf.Program) (DetachFunc, error) {
 func attachSkSkbProgram(objs *bpfObjects) (DetachFunc, error) {
 	/*
 		if err := link.RawAttachProgram(link.RawAttachProgramOptions{
-			Target:  objs.Sockmap.FD(),
+			Target:  objs.Sockhash.FD(),
 			Program: objs.SkSkbStreamParserProg,
 			Attach:  ebpf.AttachSkSKBStreamParser,
 		}); err != nil {
@@ -77,7 +85,7 @@ func attachSkSkbProgram(objs *bpfObjects) (DetachFunc, error) {
 		}
 	*/
 	if err := link.RawAttachProgram(link.RawAttachProgramOptions{
-		Target:  objs.Sockmap.FD(),
+		Target:  objs.Sockhash.FD(),
 		Program: objs.SkSkbStreamVerdictProg,
 		Attach:  ebpf.AttachSkSKBStreamVerdict,
 	}); err != nil {
@@ -86,7 +94,7 @@ func attachSkSkbProgram(objs *bpfObjects) (DetachFunc, error) {
 
 	return func() {
 		if err := link.RawDetachProgram(link.RawDetachProgramOptions{
-			Target:  objs.Sockmap.FD(),
+			Target:  objs.Sockhash.FD(),
 			Program: objs.SkSkbStreamVerdictProg,
 			Attach:  ebpf.AttachSkSKBStreamVerdict,
 		}); err != nil {
@@ -94,7 +102,7 @@ func attachSkSkbProgram(objs *bpfObjects) (DetachFunc, error) {
 		}
 		/*
 			if err := link.RawDetachProgram(link.RawDetachProgramOptions{
-				Target:  objs.Sockmap.FD(),
+				Target:  objs.Sockhash.FD(),
 				Program: objs.SkSkbStreamParserProg,
 				Attach:  ebpf.AttachSkSKBStreamParser,
 			}); err != nil {
@@ -123,4 +131,57 @@ func findCgroupPath() (string, error) {
 	}
 
 	return "", errors.New("cgroup2 not mounted")
+}
+
+func IPv4toInt(ipv4 net.IP) uint32 {
+	ipv4Bytes := ipv4.To4()
+	if ipv4Bytes == nil {
+		return 0
+	}
+	return binary.BigEndian.Uint32(ipv4Bytes)
+}
+
+func InsertDispatchMap(client, server net.Conn, dispatchMap *ebpf.Map) error {
+	key := bpfSkKey{
+		LocalIp4:   IPv4toInt(client.LocalAddr().(*net.TCPAddr).IP),
+		RemoteIp4:  IPv4toInt(client.RemoteAddr().(*net.TCPAddr).IP),
+		LocalPort:  uint32(client.LocalAddr().(*net.TCPAddr).Port),
+		RemotePort: uint32(client.RemoteAddr().(*net.TCPAddr).Port),
+	}
+	value := bpfSkKey{
+		LocalIp4:   IPv4toInt(server.LocalAddr().(*net.TCPAddr).IP),
+		RemoteIp4:  IPv4toInt(server.RemoteAddr().(*net.TCPAddr).IP),
+		LocalPort:  uint32(server.LocalAddr().(*net.TCPAddr).Port),
+		RemotePort: uint32(server.RemoteAddr().(*net.TCPAddr).Port),
+	}
+	if err := dispatchMap.Put(&key, &value); err != nil {
+		log.Println("dispatchMap.Put: %w", err)
+		return err
+	}
+	log.Println("Added mapping to dispatchMap:")
+	log.Printf("\t[local_ip4: %d, remote_ip4: %d, local_port: %d, remote_port: %d] => [local_ip4: %d, remote_ip4: %d, local_port: %d, remote_port: %d]\n",
+		key.LocalIp4, key.RemoteIp4, key.LocalPort, key.RemotePort,
+		value.LocalIp4, value.RemoteIp4, value.LocalPort, value.RemotePort)
+
+	key = bpfSkKey{
+		LocalIp4:   IPv4toInt(server.LocalAddr().(*net.TCPAddr).IP),
+		RemoteIp4:  IPv4toInt(server.RemoteAddr().(*net.TCPAddr).IP),
+		LocalPort:  uint32(server.LocalAddr().(*net.TCPAddr).Port),
+		RemotePort: uint32(server.RemoteAddr().(*net.TCPAddr).Port),
+	}
+	value = bpfSkKey{
+		LocalIp4:   IPv4toInt(client.LocalAddr().(*net.TCPAddr).IP),
+		RemoteIp4:  IPv4toInt(client.RemoteAddr().(*net.TCPAddr).IP),
+		LocalPort:  uint32(client.LocalAddr().(*net.TCPAddr).Port),
+		RemotePort: uint32(client.RemoteAddr().(*net.TCPAddr).Port),
+	}
+	if err := dispatchMap.Put(&key, &value); err != nil {
+		log.Println("dispatchMap.Put: %w", err)
+		return err
+	}
+	log.Println("Added mapping to dispatchMap:")
+	log.Printf("\t[local_ip4: %d, remote_ip4: %d, local_port: %d, remote_port: %d] => [local_ip4: %d, remote_ip4: %d, local_port: %d, remote_port: %d]\n",
+		key.LocalIp4, key.RemoteIp4, key.LocalPort, key.RemotePort,
+		value.LocalIp4, value.RemoteIp4, value.LocalPort, value.RemotePort)
+	return nil
 }

@@ -37,7 +37,7 @@ To use it, create a new cgroup `test.slice` and then add the shell you are going
 
 Now you can bring up tcpproxy-go in the shell that you added to the cgroup above (listen on port 8000, proxy to 127.0.0.1:5000):
 ```
-  bin/tcpproxy-go proxy -b 127.0.0.1 -l 8000 -e 127.0.0.1:5000
+  bin/tcpproxy-go proxy -b 127.0.0.1 -l 8000 -e -c /sys/fs/cgroup/test.slice 127.0.0.1:5000
 ```
 
 To disable BPF, remove the `--ebpf` or `-e` flag from the above tcpproxy-go command.

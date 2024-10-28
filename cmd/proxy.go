@@ -9,6 +9,7 @@ import (
 
 	"tcpproxy-go/bpf"
 
+	"github.com/cilium/ebpf"
 	"github.com/spf13/cobra"
 )
 
@@ -31,6 +32,7 @@ Flags:
   -b, --bind string   bind address [default: 127.0.0.1]
   -d, --debug         enable debug mode [default: false]
   -e, --ebpf          enable BPF programs [default: false]
+  -c, --cgroup string cgroup path [default: ""]. Only needed for EBPF.
   -l, --local string  local address [default: 8001]
 `)
 		return nil
@@ -47,6 +49,7 @@ func ProxyCommand() *cobra.Command {
 	cmd.Flags().StringP("bind", "b", "127.0.0.1", "bind address")
 	cmd.Flags().StringP("local", "l", "8001", "local address")
 	cmd.Flags().BoolP("ebpf", "e", false, "enable BPF programs")
+	cmd.Flags().StringP("cgroup", "c", "", "cgroup path")
 	cmd.Flags().BoolP("debug", "d", false, "enable debug mode")
 	cmd.SetUsageFunc(proxyUsage)
 	return cmd
@@ -65,6 +68,7 @@ func runProxy(cmd *cobra.Command, args []string) {
 		debug = false
 	}
 
+	var dispatchSk *ebpf.Map
 	if enableBPF {
 		objs, err := bpf.LoadObjects()
 		if err != nil {
@@ -72,20 +76,25 @@ func runProxy(cmd *cobra.Command, args []string) {
 		}
 		defer objs.Close()
 
+		cgroup, err := cmd.Flags().GetString("cgroup")
+		if err != nil {
+			log.Fatalf("Failed to get cgroup path: %v\n", err)
+		}
 		{
-			cancel, err := bpf.AttachProgram(objs, bpf.ProgramSockops)
+			cancel, err := bpf.AttachProgram(objs, bpf.ProgramSockops, cgroup)
 			if err != nil {
 				log.Fatalf("Failed to attach sockops program: %v\n", err)
 			}
 			defer cancel()
 		}
 		{
-			cancel, err := bpf.AttachProgram(objs, bpf.ProgramSkSkb)
+			cancel, err := bpf.AttachProgram(objs, bpf.ProgramSkSkb, cgroup)
 			if err != nil {
 				log.Fatalf("Failed to attach sk_skb program: %v\n", err)
 			}
 			defer cancel()
 		}
+		dispatchSk = objs.DispatchSk
 
 		log.Println("BPF programs are attached")
 	}
@@ -135,7 +144,11 @@ func runProxy(cmd *cobra.Command, args []string) {
 				defer rconn.Close()
 
 				log.Printf("Connected to remote server [%s]->[%s]", rconn.LocalAddr(), rconn.RemoteAddr())
-
+				if enableBPF {
+					if err = bpf.InsertDispatchMap(lconn, rconn, dispatchSk); err != nil {
+						log.Fatalf("Failed to insert dispatch map: %v\n", err)
+					}
+				}
 				wg := &sync.WaitGroup{}
 				wg.Add(2)
 
