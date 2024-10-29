@@ -24,8 +24,6 @@ enum {
 	SOCK_TYPE_PASSIVE = 1,
 };
 
-typedef __u64 ip_port_t;
-
 // client <--[key={0}]--> proxy <--[key={1}]--> server
 
 // dispatch_sk maps a local ip:local port socket dst local ip:local port socket key
@@ -33,28 +31,19 @@ typedef __u64 ip_port_t;
 // e.g. [client <--> proxy socket] => [proxy <--> server socket],
 // [proxy <--> server socket] => [client <--> proxy socket]
 struct {
-	__uint(type, BPF_MAP_TYPE_HASH);
+	__uint(type, BPF_MAP_TYPE_ARRAY);
 	__uint(max_entries, SOCKOPS_MAP_SIZE);
-	__type(key, ip_port_t);
-	__type(value, ip_port_t);
+	__type(key, __u32); // local port in host order
+	__type(value, __u32); // local port to dispatch to in host order
 } dispatch_sk SEC(".maps");
 
-// sockhash maps a 4-tuple key to a socket FD
+// sockmap maps a local port to a socket FD
 struct {
-	__uint(type, BPF_MAP_TYPE_SOCKHASH);
+	__uint(type, BPF_MAP_TYPE_SOCKMAP);
 	__uint(max_entries, SOCKOPS_MAP_SIZE);
-	__type(key, ip_port_t);
+	__type(key, __u32); // local port in host order
 	__type(value, __u32); // socket FD
-} sockhash SEC(".maps");
-
-
-static inline void init_sk_key_from_skops(struct bpf_sock_ops *skops, ip_port_t *key) {
-	*key = bpf_ntohl(skops->local_ip4) << 16 | skops->local_port;
-}
-
-static inline void init_sk_key_from_sk_buff(struct __sk_buff *skb, ip_port_t *key) {
-	*key = bpf_ntohl(skb->local_ip4) << 16 | skb->local_port;
-}
+} sockmap SEC(".maps");
 
 SEC("sockops/prog")
 int sockops_prog(struct bpf_sock_ops *skops) {
@@ -62,22 +51,21 @@ int sockops_prog(struct bpf_sock_ops *skops) {
 	if (skops == NULL || skops->family != AF_INET)
 		return 0;
 
-	ip_port_t key;
-	init_sk_key_from_skops(skops, &key);
+	__u32 key = skops->local_port;
 
 	switch (skops->op) {
 	case BPF_SOCK_OPS_PASSIVE_ESTABLISHED_CB: // SYN-ACK
-		bpf_sock_hash_update(skops, &sockhash, &key, BPF_ANY);
+		bpf_sock_map_update(skops, &sockmap, &key, BPF_ANY);
 		break;
 	case BPF_SOCK_OPS_ACTIVE_ESTABLISHED_CB: // SYN
-		bpf_sock_hash_update(skops, &sockhash, &key, BPF_ANY);
+		bpf_sock_map_update(skops, &sockmap, &key, BPF_ANY);
 		break;
 	case BPF_SOCK_OPS_STATE_CB:
 		// Socket changed state. args[0] stores the previous state.
 		// Perform cleanup of map entries if socket is exiting
 		// the 'established' state,
 		if (skops->args[0] == BPF_TCP_ESTABLISHED) {
-			bpf_map_delete_elem(&sockhash, &key);
+			bpf_map_delete_elem(&sockmap, &key);
 		}
 		break;
 	}
@@ -100,22 +88,20 @@ int sk_skb_stream_verdict_prog(struct __sk_buff *skb) {
 	if (skb->protocol != AF_INET)
 		return SK_PASS;
 
-	ip_port_t key;
-	init_sk_key_from_sk_buff(skb, &key);
+	__u32 key = skb->local_port;
 
 	// lookup in dispatch_sk for the dst 4-tuple key to dispatch to
-	ip_port_t *dispatch_sk_key = bpf_map_lookup_elem(&dispatch_sk, &key);
+	__u32 *dispatch_sk_key = bpf_map_lookup_elem(&dispatch_sk, &key);
 	if (dispatch_sk_key == NULL) {
 		bpf_printk("Did not find socket with key =>\n");
-		bpf_printk("\tlocal_ip4: %d\n", key >> 16);
-		bpf_printk("\tlocal_port: %d\n", key & 0xffff);
+		bpf_printk("\tlocal_port: %d\n", key);
 		return SK_DROP;
 	}
 
-	// doesn't work return bpf_sk_redirect_map(skb, &sockhash, dispatch_sk_key, BPF_F_INGRESS);
+	// doesn't work return bpf_sk_redirect_map(skb, &sockmap, dispatch_sk_key, BPF_F_INGRESS);
 
 	// works
-	return bpf_sk_redirect_hash(skb, &sockhash, dispatch_sk_key, 0);
+	return bpf_sk_redirect_map(skb, &sockmap, *dispatch_sk_key, 0);
 }
 
 char _license[] SEC("license") = "GPL";

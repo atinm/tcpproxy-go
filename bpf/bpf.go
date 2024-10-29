@@ -77,7 +77,7 @@ func attachSockopsProgram(p *ebpf.Program, cgroup string) (DetachFunc, error) {
 func attachSkSkbProgram(objs *bpfObjects) (DetachFunc, error) {
 	/*
 		if err := link.RawAttachProgram(link.RawAttachProgramOptions{
-			Target:  objs.Sockhash.FD(),
+			Target:  objs.Sockmap.FD(),
 			Program: objs.SkSkbStreamParserProg,
 			Attach:  ebpf.AttachSkSKBStreamParser,
 		}); err != nil {
@@ -85,7 +85,7 @@ func attachSkSkbProgram(objs *bpfObjects) (DetachFunc, error) {
 		}
 	*/
 	if err := link.RawAttachProgram(link.RawAttachProgramOptions{
-		Target:  objs.Sockhash.FD(),
+		Target:  objs.Sockmap.FD(),
 		Program: objs.SkSkbStreamVerdictProg,
 		Attach:  ebpf.AttachSkSKBStreamVerdict,
 	}); err != nil {
@@ -94,7 +94,7 @@ func attachSkSkbProgram(objs *bpfObjects) (DetachFunc, error) {
 
 	return func() {
 		if err := link.RawDetachProgram(link.RawDetachProgramOptions{
-			Target:  objs.Sockhash.FD(),
+			Target:  objs.Sockmap.FD(),
 			Program: objs.SkSkbStreamVerdictProg,
 			Attach:  ebpf.AttachSkSKBStreamVerdict,
 		}); err != nil {
@@ -102,7 +102,7 @@ func attachSkSkbProgram(objs *bpfObjects) (DetachFunc, error) {
 		}
 		/*
 			if err := link.RawDetachProgram(link.RawDetachProgramOptions{
-				Target:  objs.Sockhash.FD(),
+				Target:  objs.Sockmap.FD(),
 				Program: objs.SkSkbStreamParserProg,
 				Attach:  ebpf.AttachSkSKBStreamParser,
 			}); err != nil {
@@ -142,24 +142,22 @@ func IPv4toInt(ipv4 net.IP) uint32 {
 }
 
 func InsertDispatchMap(client, server net.Conn, dispatchMap *ebpf.Map) error {
-	key := uint64(IPv4toInt(client.LocalAddr().(*net.TCPAddr).IP))<<16 | uint64(client.LocalAddr().(*net.TCPAddr).Port)
-	value := uint64(IPv4toInt(server.LocalAddr().(*net.TCPAddr).IP))<<16 | uint64(server.LocalAddr().(*net.TCPAddr).Port)
+	key := uint32(client.LocalAddr().(*net.TCPAddr).Port)
+	value := uint32(server.LocalAddr().(*net.TCPAddr).Port)
 	if err := dispatchMap.Put(&key, &value); err != nil {
 		log.Println("dispatchMap.Put: %w", err)
 		return err
 	}
 	log.Println("Added mapping to dispatchMap:")
-	log.Printf("\t[local_ip4: %d, local_port: %d] => [local_ip4: %d, local_port: %d]\n",
-		key>>16, key&0xffff, value>>16, value&0xffff)
+	log.Printf("\t[local_port: %d] => [local_port: %d]\n", key, value)
 
-	key = uint64(IPv4toInt(server.LocalAddr().(*net.TCPAddr).IP))<<16 | uint64(server.LocalAddr().(*net.TCPAddr).Port)
-	value = uint64(IPv4toInt(client.LocalAddr().(*net.TCPAddr).IP))<<16 | uint64(client.LocalAddr().(*net.TCPAddr).Port)
+	key = uint32(server.LocalAddr().(*net.TCPAddr).Port)
+	value = uint32(client.LocalAddr().(*net.TCPAddr).Port)
 	if err := dispatchMap.Put(&key, &value); err != nil {
 		log.Println("dispatchMap.Put: %w", err)
 		return err
 	}
 	log.Println("Added mapping to dispatchMap:")
-	log.Printf("\t[local_ip4: %d, local_port: %d] => [local_ip4: %d, local_port: %d]\n",
-		key>>16, key&0xffff, value>>16, value&0xffff)
+	log.Printf("\t[local_port: %d] => [local_port: %d]\n", key, value)
 	return nil
 }
