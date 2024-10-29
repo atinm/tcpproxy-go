@@ -142,46 +142,24 @@ func IPv4toInt(ipv4 net.IP) uint32 {
 }
 
 func InsertDispatchMap(client, server net.Conn, dispatchMap *ebpf.Map) error {
-	key := bpfSkKey{
-		LocalIp4:   IPv4toInt(client.LocalAddr().(*net.TCPAddr).IP),
-		RemoteIp4:  IPv4toInt(client.RemoteAddr().(*net.TCPAddr).IP),
-		LocalPort:  uint32(client.LocalAddr().(*net.TCPAddr).Port),
-		RemotePort: uint32(client.RemoteAddr().(*net.TCPAddr).Port),
-	}
-	value := bpfSkKey{
-		LocalIp4:   IPv4toInt(server.LocalAddr().(*net.TCPAddr).IP),
-		RemoteIp4:  IPv4toInt(server.RemoteAddr().(*net.TCPAddr).IP),
-		LocalPort:  uint32(server.LocalAddr().(*net.TCPAddr).Port),
-		RemotePort: uint32(server.RemoteAddr().(*net.TCPAddr).Port),
-	}
+	key := uint64(IPv4toInt(client.LocalAddr().(*net.TCPAddr).IP))<<16 | uint64(client.LocalAddr().(*net.TCPAddr).Port)
+	value := uint64(IPv4toInt(server.LocalAddr().(*net.TCPAddr).IP))<<16 | uint64(server.LocalAddr().(*net.TCPAddr).Port)
 	if err := dispatchMap.Put(&key, &value); err != nil {
 		log.Println("dispatchMap.Put: %w", err)
 		return err
 	}
 	log.Println("Added mapping to dispatchMap:")
-	log.Printf("\t[local_ip4: %d, remote_ip4: %d, local_port: %d, remote_port: %d] => [local_ip4: %d, remote_ip4: %d, local_port: %d, remote_port: %d]\n",
-		key.LocalIp4, key.RemoteIp4, key.LocalPort, key.RemotePort,
-		value.LocalIp4, value.RemoteIp4, value.LocalPort, value.RemotePort)
+	log.Printf("\t[local_ip4: %d, local_port: %d] => [local_ip4: %d, local_port: %d]\n",
+		key>>16, key&0xffff, value>>16, value&0xffff)
 
-	key = bpfSkKey{
-		LocalIp4:   IPv4toInt(server.LocalAddr().(*net.TCPAddr).IP),
-		RemoteIp4:  IPv4toInt(server.RemoteAddr().(*net.TCPAddr).IP),
-		LocalPort:  uint32(server.LocalAddr().(*net.TCPAddr).Port),
-		RemotePort: uint32(server.RemoteAddr().(*net.TCPAddr).Port),
-	}
-	value = bpfSkKey{
-		LocalIp4:   IPv4toInt(client.LocalAddr().(*net.TCPAddr).IP),
-		RemoteIp4:  IPv4toInt(client.RemoteAddr().(*net.TCPAddr).IP),
-		LocalPort:  uint32(client.LocalAddr().(*net.TCPAddr).Port),
-		RemotePort: uint32(client.RemoteAddr().(*net.TCPAddr).Port),
-	}
+	key = uint64(IPv4toInt(server.LocalAddr().(*net.TCPAddr).IP))<<16 | uint64(server.LocalAddr().(*net.TCPAddr).Port)
+	value = uint64(IPv4toInt(client.LocalAddr().(*net.TCPAddr).IP))<<16 | uint64(client.LocalAddr().(*net.TCPAddr).Port)
 	if err := dispatchMap.Put(&key, &value); err != nil {
 		log.Println("dispatchMap.Put: %w", err)
 		return err
 	}
 	log.Println("Added mapping to dispatchMap:")
-	log.Printf("\t[local_ip4: %d, remote_ip4: %d, local_port: %d, remote_port: %d] => [local_ip4: %d, remote_ip4: %d, local_port: %d, remote_port: %d]\n",
-		key.LocalIp4, key.RemoteIp4, key.LocalPort, key.RemotePort,
-		value.LocalIp4, value.RemoteIp4, value.LocalPort, value.RemotePort)
+	log.Printf("\t[local_ip4: %d, local_port: %d] => [local_ip4: %d, local_port: %d]\n",
+		key>>16, key&0xffff, value>>16, value&0xffff)
 	return nil
 }
